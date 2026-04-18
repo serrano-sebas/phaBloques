@@ -207,6 +207,8 @@ bool PhA::generatePag(string& outDir, int nBloqueThumb, bool verbose) {
             canvasRect.right = iPag->coord.right;
         if (iPag->coord.bottom > canvasRect.bottom)
             canvasRect.bottom = iPag->coord.bottom;
+        if (iPag->nPag == -4) // la anchura de la contraportada trasera es el doble
+            canvasRect.right *= 2;
         if (verbose)
             cout << iPag->nPag << " ";
     }
