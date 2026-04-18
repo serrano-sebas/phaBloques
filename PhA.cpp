@@ -277,8 +277,8 @@ bool PhA::generatePag(string& outDir, int nBloqueThumb, bool verbose) {
                 double dy = -((double)sombra->distancia) * sin(angulo);
                 int dw = imag->sizeRotated.width - imag->sizeRect.width;
                 double radio = (sombra->tamanno > abs(dx)) ? (0.5 * dw) : (- abs(dx) + dw);
-                offsetx = (int)max(radio - abs(dx), 0.0);
-                offsety = (int)max(radio + abs(dy), 0.0);
+                offsetx = (int)max(radio - dx, 0.0);
+                offsety = (int)max(radio + dy, 0.0);
             }
             switch (imag->tipoImage) {
             case 0:
