@@ -110,7 +110,7 @@ void PhA::printResumen(int tipo, int extract) {
             cout << dec << setw(5) << i << " = " << tipoBloques[i] << " veces" << endl;
 }
 
-void PhA::generate(string& outDir, bool verbose) {
+void PhA::generate(string& outDir, bool verbose, bool split, int newh) {
 #ifdef _WIN32
     char slash = '\\';
 #else
@@ -146,7 +146,7 @@ void PhA::generate(string& outDir, bool verbose) {
            // i-1 indice de elementos
         DetailPhAIndexThumb* iThumb = dynamic_cast<DetailPhAIndexThumb*>(pBloque->second->detail.get());
         for (int bloqueThumb : iThumb->bloques) {
-            if (!generatePag(outDir, bloqueThumb, verbose))
+            if (!generatePag(outDir, bloqueThumb, verbose, split, newh))
                 break;
         }
     }
@@ -156,7 +156,7 @@ void PhA::generate(string& outDir, bool verbose) {
         cout << "Libreria FreeImage descargada" << endl << "Proceso finalizado" << endl;
 }
 
-bool PhA::generatePag(string& outDir, int nBloqueThumb, bool verbose) {
+bool PhA::generatePag(string& outDir, int nBloqueThumb, bool verbose, bool split, int newh) {
     auto pBloque = pha.find(nBloqueThumb);
     if ((pBloque == pha.end()) || (pBloque->second->tipo != 2)) {
         PhA::printError(nBloqueThumb, "Esperado tipo bloque 2 (thumb)");
@@ -170,6 +170,8 @@ bool PhA::generatePag(string& outDir, int nBloqueThumb, bool verbose) {
     }
     DetailPhAPagina* iPags = dynamic_cast<DetailPhAPagina*>(pBloque->second->detail.get());
     string nameFile = "";
+    string leftFile = "";
+    string rightFile = "";
     Rect canvasRect;
     canvasRect.left = 0; canvasRect.top = 0; canvasRect.right = 0; canvasRect.bottom = 0;
     bool first = true;
@@ -190,14 +192,24 @@ bool PhA::generatePag(string& outDir, int nBloqueThumb, bool verbose) {
             nameFile += "0000A_Tapas";
         else if (iPag->nPag == -2)
             ;
-        else if (iPag->nPag == -3)
+        else if (iPag->nPag == -3) {
             nameFile += "0000B_GDelantera";
-        else if (iPag->nPag == -4)
+            leftFile = outDir + "0000B_GDelantera1.jpg";
+            rightFile = outDir + "0000B_GDelantera2.jpg";
+        }
+        else if (iPag->nPag == -4) {
             nameFile += "ZZZZ_GTrasera";
+			leftFile = outDir + "ZZZZ_GTrasera1.jpg";
+			rightFile = outDir + "ZZZZ_GTrasera2.jpg";
+        }
         else if (iPag->nPag > 0) {
             ostringstream oss;
             oss << setw(4) << std::setfill('0') << iPag->nPag;
             nameFile += oss.str();
+            if (leftFile.empty())
+				leftFile = outDir + oss.str() + ".jpg";
+            else
+				rightFile = outDir + oss.str() + ".jpg";
         }
         else {
             PhA::printError(blqPag, "Numero de pagina no esperada");
@@ -221,7 +233,7 @@ bool PhA::generatePag(string& outDir, int nBloqueThumb, bool verbose) {
 
     // Crear lienzo RGB (32 bits)
     const int canvas_w = canvasRect.right - canvasRect.left;
-    const int canvas_h = canvasRect.bottom - canvasRect.top;
+    int canvas_h = canvasRect.bottom - canvasRect.top;
     FIBITMAP* canvas = FreeImage_Allocate(canvas_w, canvas_h, 24);
 
     // Fondo blanco
@@ -302,10 +314,43 @@ bool PhA::generatePag(string& outDir, int nBloqueThumb, bool verbose) {
     }
     cout << endl;
 
+	// Escalado vertical para ajustar a la altura del lienzo (si es necesario)
+    if (!leftFile.empty() && (newh > 0)) {
+        FIBITMAP* scaled = ExtendVerticalBlur(canvas, newh);
+        FreeImage_Unload(canvas);
+        canvas = scaled;
+        canvas_h = 2970;
+    }
+
     // Guardando imagen
     FreeImage_SetDotsPerMeterX(canvas, 10000);
     FreeImage_SetDotsPerMeterY(canvas, 10000);
-    FreeImage_Save(FIF_JPEG, canvas, nameFile.c_str(), JPEG_QUALITYSUPERB);
+    if (!split || leftFile.empty()) {
+        FreeImage_Save(FIF_JPEG, canvas, nameFile.c_str(), JPEG_QUALITYSUPERB);
+    }
+    else {
+        // Dividir en dos mitades
+        int half = canvas_w / 2;
+
+        // Recortar izquierda
+        FIBITMAP* left = FreeImage_Copy(canvas, 0, 0, half, canvas_h);
+        // Recortar derecha
+        FIBITMAP* right = FreeImage_Copy(canvas, half, 0, canvas_w, canvas_h);
+        // ?? Convertir a 24 bits para JPG (MUY IMPORTANTE)
+        FIBITMAP* left24 = FreeImage_ConvertTo24Bits(left);
+        FIBITMAP* right24 = FreeImage_ConvertTo24Bits(right);
+        // Guardar JPG
+        if (!leftFile.empty()) {
+            FreeImage_Save(FIF_JPEG, left24, leftFile.c_str(), JPEG_QUALITYSUPERB);
+            FreeImage_Save(FIF_JPEG, right24, rightFile.c_str(), JPEG_QUALITYSUPERB);
+        }
+
+        // Liberar memoria
+        FreeImage_Unload(left);
+        FreeImage_Unload(right);
+        FreeImage_Unload(left24);
+        FreeImage_Unload(right24);
+    }
     FreeImage_Unload(canvas);
     return true;
 }
@@ -391,204 +436,57 @@ void PhA::pasteImageRaw(FIBITMAP* canvas, unsigned char* rgbAlpha,
     }
 }
 
-
-
-/*
-// ------------------------------------------------------------
-// Estructura para cada TIFF que tengas en memoria
-// ------------------------------------------------------------
-struct TiffMem
+FIBITMAP* PhA::ExtendVerticalBlur(FIBITMAP* src, int newHeight)
 {
-    const BYTE* data;
-    DWORD size;
-    int x;
-    int y;
-};
+    int width = FreeImage_GetWidth(src);
+    int height = FreeImage_GetHeight(src);
 
-// ------------------------------------------------------------
-// Cargar TIFF desde memoria
-// ------------------------------------------------------------
-FIBITMAP* loadTiffFromMemory(const BYTE* data, DWORD size)
-{
-    FIMEMORY* mem = FreeImage_OpenMemory((BYTE*)data, size);
+	cout << "resizing from " << height << " to " << newHeight << " pixels vertically" << endl;
 
-    FREE_IMAGE_FORMAT format = FreeImage_GetFileTypeFromMemory(mem);
-    FIBITMAP* bmp = FreeImage_LoadFromMemory(format, mem);
+    if (newHeight <= height)
+        return FreeImage_Clone(src);
 
-    FreeImage_CloseMemory(mem);
-    return bmp;
-}
+    int extra = newHeight - height;
+    int band = extra / 2;
+    int sample = band / 3;
 
-// ------------------------------------------------------------
-// Mezclar una imagen con transparencia sobre el lienzo
-// ------------------------------------------------------------
-void pasteImage(FIBITMAP* canvas, FIBITMAP* src, int x, int y)
-{
-    int w = FreeImage_GetWidth(src);
-    int h = FreeImage_GetHeight(src);
-
-    // Convertir a 32 bits (RGBA)
+    // Convertir a 32 bits por seguridad
     FIBITMAP* src32 = FreeImage_ConvertTo32Bits(src);
 
-    for (int iy = 0; iy < h; iy++)
-    {
-        BYTE* srcPixel = FreeImage_GetScanLine(src32, iy);
+    // Crear canvas destino
+    FIBITMAP* dst = FreeImage_Allocate(width, newHeight, 32);
 
-        for (int ix = 0; ix < w; ix++)
-        {
-            int dx = x + ix;
-            int dy = y + iy;
+    // ----------- 1. Copiar imagen original centrada -----------
+    FreeImage_Paste(dst, src32, 0, band, 256);
 
-            if (dx < 0 || dy < 0 ||
-                dx >= FreeImage_GetWidth(canvas) ||
-                dy >= FreeImage_GetHeight(canvas))
-                continue;
+    // ----------- 2. Banda SUPERIOR -----------
+    FIBITMAP* topSample = FreeImage_Copy(src32, 0, height - sample, width, height);
+    FIBITMAP* topScaled = FreeImage_Rescale(topSample, width, band, FILTER_BILINEAR);
+    FreeImage_FlipVertical(topScaled);
+    FIBITMAP* tmp = FreeImage_Rescale(topScaled, width / 10, band / 10, FILTER_BILINEAR);
+    FIBITMAP* blurred = FreeImage_Rescale(tmp, width, band, FILTER_BILINEAR);
+	FreeImage_Unload(topSample);
+    FreeImage_Unload(topScaled);
+    FreeImage_Unload(tmp);
 
-            BYTE* dstPixel = FreeImage_GetScanLine(canvas, dy) + dx * 3;
+    FreeImage_Paste(dst, blurred, 0, band + height, 256);
+    FreeImage_Unload(blurred);
 
-            BYTE b = srcPixel[ix * 4 + 0];
-            BYTE g = srcPixel[ix * 4 + 1];
-            BYTE r = srcPixel[ix * 4 + 2];
-            BYTE a = srcPixel[ix * 4 + 3];
+    // ----------- 3. Banda INFERIOR -----------
+    FIBITMAP* bottomSample = FreeImage_Copy(src32, 0, 0, width, sample);
+    FIBITMAP* bottomScaled = FreeImage_Rescale(bottomSample, width, band, FILTER_BILINEAR);
+    FreeImage_FlipVertical(bottomScaled);
+    tmp = FreeImage_Rescale(bottomScaled, width / 10, band / 10, FILTER_BILINEAR);
+    blurred = FreeImage_Rescale(tmp, width, band, FILTER_BILINEAR);
+    FreeImage_Unload(bottomSample);
+    FreeImage_Unload(bottomScaled);
+    FreeImage_Unload(tmp);
 
-            float alpha = a / 255.0f;
-
-            dstPixel[0] = (BYTE)(b * alpha + dstPixel[0] * (1 - alpha));
-            dstPixel[1] = (BYTE)(g * alpha + dstPixel[1] * (1 - alpha));
-            dstPixel[2] = (BYTE)(r * alpha + dstPixel[2] * (1 - alpha));
-        }
-    }
-
-    FreeImage_Unload(src32);
-}
-
-// ------------------------------------------------------------
-// PROGRAMA PRINCIPAL
-// ------------------------------------------------------------
-int main()
-{
-    FreeImage_Initialise();
-
-    const int canvas_w = 3000;
-    const int canvas_h = 2000;
-
-    // Crear lienzo RGB (24 bits)
-    FIBITMAP* canvas = FreeImage_Allocate(canvas_w, canvas_h, 24);
-
-    // Fondo blanco
-    for (int y = 0; y < canvas_h; y++)
-    {
-        BYTE* line = FreeImage_GetScanLine(canvas, y);
-        for (int x = 0; x < canvas_w * 3; x++)
-            line[x] = 255;
-    }
-
-    // --------------------------------------------------------
-    // EJEMPLO: aquí pondrías tus TIFF en memoria
-    // --------------------------------------------------------
-    std::vector<TiffMem> imagenes;
-
-    // (Aquí añades tus buffers TIFF reales)
-    // imagenes.push_back({buffer1, size1, 100, 200});
-    // imagenes.push_back({buffer2, size2, 500, 400});
-
-    // --------------------------------------------------------
-    // Insertar imágenes en orden
-    // --------------------------------------------------------
-    for (auto& img : imagenes)
-    {
-        FIBITMAP* bmp = loadTiffFromMemory(img.data, img.size);
-
-        if (!bmp)
-        {
-            std::cout << "Error leyendo TIFF\n";
-            continue;
-        }
-
-        pasteImage(canvas, bmp, img.x, img.y);
-        FreeImage_Unload(bmp);
-    }
-
-    // --------------------------------------------------------
-    // Establecer DPI (300 ppp)
-    // --------------------------------------------------------
-    FreeImage_SetDotsPerMeterX(canvas, 11811);
-    FreeImage_SetDotsPerMeterY(canvas, 11811);
-
-    // --------------------------------------------------------
-    // Guardar JPG
-    // --------------------------------------------------------
-    FreeImage_Save(FIF_JPEG, canvas, "resultado.jpg", JPEG_QUALITYSUPERB);
-
-    FreeImage_Unload(canvas);
-    FreeImage_DeInitialise();
-
-    std::cout << "JPG creado correctamente\n";
-}
+    FreeImage_Paste(dst, blurred, 0, 0, 256);
+    FreeImage_Unload(blurred);
  
- #include <FreeImage.h>
-#include <iostream>
+    // ----------- 4. Liberar memoria -----------
+    FreeImage_Unload(src32);
 
-int main()
-{
-    FreeImage_Initialise();
-
-    // 1) Cargar canvas base
-    FIBITMAP* canvas = FreeImage_Load(FIF_JPEG, "base.jpg");
-    canvas = FreeImage_ConvertTo32Bits(canvas);
-
-    // 2) Datos RAW (ejemplo)
-    int width  = 1500;
-    int height = 600;
-
-    unsigned char* rgb   = // buffer RGB del PhA
-    unsigned char* alpha = // buffer máscara del PhA
-
-    // 3) Pegar en el canvas
-    pasteRawRGBconAlpha(canvas, rgb, alpha, width, height, 200, 300);
-
-    // 4) Guardar resultado
-    FreeImage_Save(FIF_JPEG, canvas, "resultado.jpg", JPEG_QUALITYSUPERB);
-
-    FreeImage_Unload(canvas);
-    FreeImage_DeInitialise();
-
-    std::cout << "Imagen generada correctamente\n";
-    return 0;
+    return dst;
 }
-
-#include <FreeImage.h>
-
-void pasteRawRGBconAlpha(
-    FIBITMAP* canvas,
-    unsigned char* rgb,
-    unsigned char* alpha,
-    int width,
-    int height,
-    int posX,
-    int posY)
-{
-    // Crear imagen temporal RGBA
-    FIBITMAP* overlay = FreeImage_Allocate(width, height, 32);
-
-    for (int y = 0; y < height; y++)
-    {
-        BYTE* dst = FreeImage_GetScanLine(overlay, height - 1 - y);
-
-        for (int x = 0; x < width; x++)
-        {
-            int i = y * width + x;
-
-            dst[x*4 + 0] = rgb[i*3 + 2];   // B
-            dst[x*4 + 1] = rgb[i*3 + 1];   // G
-            dst[x*4 + 2] = rgb[i*3 + 0];   // R
-            dst[x*4 + 3] = alpha[i];       // A (0–255)
-        }
-    }
-
-    // Pegar usando canal alfa
-    FreeImage_Paste(canvas, overlay, posX, posY, 256);
-
-    FreeImage_Unload(overlay);
-}
- */

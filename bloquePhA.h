@@ -168,12 +168,13 @@ public:
     virtual ~PhA();
     streampos readCabecera();
     void printResumen(int tipo, int extract);
-    void generate(string& outDir, bool verbose);
+    void generate(string& outDir, bool verbose, bool split, int newh);
 
 private:
-    bool generatePag(string& outDir, int nBloqueThumb, bool verbose);
+    bool generatePag(string& outDir, int nBloqueThumb, bool verbose, bool split, int newh);
     void pasteImageTiff(FIBITMAP* canvas, char* buffer, size_t size, 
         int x, int y, int width, int height);
     void pasteImageRaw(FIBITMAP* canvas, unsigned char* rgbAlpha,
         int width, int height, int posX, int posY);
+    FIBITMAP* ExtendVerticalBlur(FIBITMAP* src, int newHeight);
 };
